@@ -1,0 +1,64 @@
+pipeline {
+    agent any
+
+    tools {
+        gradle 'gradle-7.6.1'
+        jdk 'jdk-17'
+    }
+
+    environment {
+        // NHN NCR 설정
+        NCR_REGISTRY = '4a7e3ac9-kr1-registry.container.nhncloud.com'
+        NCR_REPO = 'ncr_test'
+        NCR_IMAGE = 'api-tester'
+        NCR_TAG = 'v1.0.0'
+
+        // Git 저장소 URL
+        GITHUB_URL = 'https://github.com/infrasom/kubernetes-anotherclass-sprint2.git'
+
+        // 실습 넘버링 - (수정x)
+        CLASS_NUM = '2211'
+    }
+
+    stages {
+        stage('Source Build') {
+            steps {
+                // 소스 체크아웃
+                git branch: 'main', url: 'https://github.com/k8s-1pro/kubernetes-anotherclass-api-tester.git'
+                
+                // Gradle 빌드
+                sh "chmod +x ./gradlew"
+                sh "./gradlew clean build"
+            }
+        }
+
+        stage('Container Build & Push to NHN NCR') {
+            steps {	
+                // 릴리즈파일 체크아웃
+                checkout scmGit(branches: [[name: '*/main']], 
+                    extensions: [[$class: 'SparseCheckoutPaths', 
+                    sparseCheckoutPaths: [[path: "/${CLASS_NUM}"]]]], 
+                    userRemoteConfigs: [[url: "${GITHUB_URL}"]])
+
+                // JAR 파일 복사
+                sh "cp ./build/libs/app-0.0.1-SNAPSHOT.jar ./${CLASS_NUM}/build/docker/app-0.0.1-SNAPSHOT.jar"
+
+                // NHN NCR 로그인 및 Docker Push (하나의 credentials 사용)
+                withCredentials([usernamePassword(credentialsId: 'NCR_CREDENTIALS', 
+                                                 usernameVariable: 'NCR_USERNAME', 
+                                                 passwordVariable: 'NCR_PASSWORD')]) {
+                    sh """
+                        echo "Logging into NHN Cloud NCR..."
+                        echo "$NCR_PASSWORD" | docker login ${NCR_REGISTRY} -u "$NCR_USERNAME" --password-stdin
+
+                        echo "Building Docker Image..."
+                        docker build -t ${NCR_REGISTRY}/${NCR_REPO}/${NCR_IMAGE}:${NCR_TAG} ./${CLASS_NUM}/build/docker
+
+                        echo "Pushing Docker Image..."
+                        docker push ${NCR_REGISTRY}/${NCR_REPO}/${NCR_IMAGE}:${NCR_TAG}
+                    """
+                }
+            }
+        }
+    }
+}
